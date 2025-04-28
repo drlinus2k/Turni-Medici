@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from ics import Calendar, Event
+import re
 
 # Configurazione Streamlit
 st.set_page_config(
@@ -21,7 +22,7 @@ if uploaded_file:
     st.success("File caricato correttamente!")
 
     # Selezione del cognome
-    cognome_cercato = st.text_input("Inserisci il tuo cognome esattamente come scritto nel file").strip()
+    cognome_cercato = st.text_input("Inserisci il tuo cognome esattamente come nel file").strip()
 
     # Selezione contratto
     contratto = st.radio(
@@ -37,19 +38,24 @@ if uploaded_file:
         calendario = Calendar()
         ore_totali = 0
 
-        # Estraggo i dati dalla prima riga: turni e orari
+        # Estraggo i dati dalla prima riga: nome turno + orario
         turni_info = []
         for col_idx in range(1, len(df.columns)):
             valore = str(df.iloc[0, col_idx])
             if pd.notna(valore):
                 try:
-                    parti = valore.split()
-                    nome_turno = " ".join(parti[:-1])
-                    orari = parti[-1]
-                    ora_inizio_str, ora_fine_str = orari.split("-")
-                    ora_inizio = pd.to_datetime(ora_inizio_str).time()
-                    ora_fine = pd.to_datetime(ora_fine_str).time()
-                    turni_info.append((col_idx, nome_turno, ora_inizio, ora_fine))
+                    # Dividiamo testo in nome turno + orario
+                    match = re.search(r"(\d{1,2}[.,-]\d{2})[-](\d{1,2}[.,-]\d{2})", valore)
+                    if match:
+                        ora_inizio_raw = match.group(1).replace(",", ":").replace(".", ":").replace("-", ":")
+                        ora_fine_raw = match.group(2).replace(",", ":").replace(".", ":").replace("-", ":")
+                        
+                        ora_inizio = pd.to_datetime(ora_inizio_raw, format="%H:%M").time()
+                        ora_fine = pd.to_datetime(ora_fine_raw, format="%H:%M").time()
+                        
+                        nome_turno = valore[:match.start()].strip()
+
+                        turni_info.append((col_idx, nome_turno, ora_inizio, ora_fine))
                 except Exception as e:
                     st.warning(f"Errore nella lettura della prima riga nella colonna {col_idx + 1}: {e}")
 
@@ -68,11 +74,13 @@ if uploaded_file:
                     evento.begin = datetime.combine(giorno_data, ora_inizio)
                     evento.end = datetime.combine(giorno_data, ora_fine)
                     evento.location = indirizzo_lavoro
-                    evento.description = "Turno generato automaticamente."
+                    evento.description = "Turno registrato automaticamente."
 
                     calendario.events.add(evento)
 
                     durata_ore = (datetime.combine(giorno_data, ora_fine) - datetime.combine(giorno_data, ora_inizio)).total_seconds() / 3600
+                    if durata_ore < 0:
+                        durata_ore += 24  # correggo notte che attraversa mezzanotte
                     ore_totali += durata_ore
 
         # Visualizzazione risultati
