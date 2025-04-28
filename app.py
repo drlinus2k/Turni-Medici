@@ -7,9 +7,9 @@ import re
 # Funzione per convertire valore Excel (frazione giorno) in orario
 def excel_time_to_time(value):
     if isinstance(value, (int, float)):
-        secondi_totali = int(round(value * 24 * 3600))
-        ore = secondi_totali // 3600
-        minuti = (secondi_totali % 3600) // 60
+        ore_float = value * 24
+        ore = int(ore_float)
+        minuti = int(round((ore_float - ore) * 60))
         return f"{ore:02d}:{minuti:02d}"
     else:
         return str(value).replace(",", ":").replace(".", ":").replace("-", ":")
