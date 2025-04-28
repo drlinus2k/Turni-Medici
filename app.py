@@ -1,14 +1,18 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from ics import Calendar, Event
 import re
 
-# Funzione per convertire numeri tipo 8.00 in "08:00"
-def float_to_time_string(valore):
-    ore = int(valore)
-    minuti = int(round((valore - ore) * 60))
-    return f"{ore:02d}:{minuti:02d}"
+# Funzione per convertire valore Excel (frazione giorno) in orario
+def excel_time_to_time(value):
+    if isinstance(value, (int, float)):
+        secondi_totali = int(round(value * 24 * 3600))
+        ore = secondi_totali // 3600
+        minuti = (secondi_totali % 3600) // 60
+        return f"{ore:02d}:{minuti:02d}"
+    else:
+        return str(value).replace(",", ":").replace(".", ":").replace("-", ":")
 
 # Configurazione Streamlit
 st.set_page_config(
@@ -55,24 +59,24 @@ if uploaded_file:
             valore_str = str(valore)
 
             try:
-                # Se contiene numeri separati da trattino
+                # Cerco coppia orari separati da trattino
                 match = re.search(r"(\d{1,2}[.,-]?\d{0,2})[-](\d{1,2}[.,-]?\d{0,2})", valore_str)
                 if match:
-                    ora_inizio_raw = match.group(1).replace(",", ".").replace("-", ".")
-                    ora_fine_raw = match.group(2).replace(",", ".").replace("-", ".")
+                    ora_inizio_raw = match.group(1)
+                    ora_fine_raw = match.group(2)
 
+                    # Se è un float, converti come frazione giorno Excel
                     try:
-                        # Prova a interpretare come numeri
-                        ora_inizio_num = float(ora_inizio_raw)
-                        ora_fine_num = float(ora_fine_raw)
-
-                        ora_inizio = pd.to_datetime(float_to_time_string(ora_inizio_num), format="%H:%M").time()
-                        ora_fine = pd.to_datetime(float_to_time_string(ora_fine_num), format="%H:%M").time()
-
+                        ora_inizio_excel = float(ora_inizio_raw.replace(",", ".").replace("-", "."))
+                        ora_fine_excel = float(ora_fine_raw.replace(",", ".").replace("-", "."))
+                        ora_inizio_str = excel_time_to_time(ora_inizio_excel)
+                        ora_fine_str = excel_time_to_time(ora_fine_excel)
                     except:
-                        # Se non sono numeri, tratta come testo orario normale
-                        ora_inizio = pd.to_datetime(ora_inizio_raw.replace(".", ":")).time()
-                        ora_fine = pd.to_datetime(ora_fine_raw.replace(".", ":")).time()
+                        ora_inizio_str = excel_time_to_time(ora_inizio_raw)
+                        ora_fine_str = excel_time_to_time(ora_fine_raw)
+
+                    ora_inizio = pd.to_datetime(ora_inizio_str, format="%H:%M").time()
+                    ora_fine = pd.to_datetime(ora_fine_str, format="%H:%M").time()
 
                     nome_turno = valore_str[:match.start()].strip()
 
