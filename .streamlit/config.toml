@@ -1,6 +1,6 @@
 [server]
 headless = true
-enableCORS = true
+enableCORS = false
 port = 10000
 
 [theme]
