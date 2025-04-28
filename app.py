@@ -38,21 +38,21 @@ if uploaded_file:
         calendario = Calendar()
         ore_totali = 0
 
-        # Estraggo i dati dalla prima riga: nome turno + orario
+        # Estraggo nome turno + orario dalla prima riga
         turni_info = []
         for col_idx in range(1, len(df.columns)):
             valore = str(df.iloc[0, col_idx])
             if pd.notna(valore):
                 try:
-                    # Dividiamo testo in nome turno + orario
+                    # Separiamo nome turno e orari
                     match = re.search(r"(\d{1,2}[.,-]\d{2})[-](\d{1,2}[.,-]\d{2})", valore)
                     if match:
                         ora_inizio_raw = match.group(1).replace(",", ":").replace(".", ":").replace("-", ":")
                         ora_fine_raw = match.group(2).replace(",", ":").replace(".", ":").replace("-", ":")
-                        
+
                         ora_inizio = pd.to_datetime(ora_inizio_raw, format="%H:%M").time()
                         ora_fine = pd.to_datetime(ora_fine_raw, format="%H:%M").time()
-                        
+
                         nome_turno = valore[:match.start()].strip()
 
                         turni_info.append((col_idx, nome_turno, ora_inizio, ora_fine))
@@ -69,18 +69,26 @@ if uploaded_file:
             for col_idx, nome_turno, ora_inizio, ora_fine in turni_info:
                 valore_cella = df.iloc[i, col_idx]
                 if str(valore_cella).strip().upper() == cognome_cercato.upper():
+                    # Costruisco inizio e fine turno
+                    inizio_dt = datetime.combine(giorno_data, ora_inizio)
+                    fine_dt = datetime.combine(giorno_data, ora_fine)
+
+                    # Se il turno attraversa la mezzanotte, aggiungo 1 giorno
+                    if fine_dt <= inizio_dt:
+                        fine_dt += pd.Timedelta(days=1)
+
+                    # Creo evento
                     evento = Event()
                     evento.name = nome_turno
-                    evento.begin = datetime.combine(giorno_data, ora_inizio)
-                    evento.end = datetime.combine(giorno_data, ora_fine)
+                    evento.begin = inizio_dt
+                    evento.end = fine_dt
                     evento.location = indirizzo_lavoro
                     evento.description = "Turno registrato automaticamente."
 
                     calendario.events.add(evento)
 
-                    durata_ore = (datetime.combine(giorno_data, ora_fine) - datetime.combine(giorno_data, ora_inizio)).total_seconds() / 3600
-                    if durata_ore < 0:
-                        durata_ore += 24  # correggo notte che attraversa mezzanotte
+                    # Calcolo ore
+                    durata_ore = (fine_dt - inizio_dt).total_seconds() / 3600
                     ore_totali += durata_ore
 
         # Visualizzazione risultati
