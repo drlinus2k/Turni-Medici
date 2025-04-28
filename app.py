@@ -1,8 +1,14 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 from ics import Calendar, Event
 import re
+
+# Funzione per convertire numeri tipo 8.00 in "08:00"
+def float_to_time_string(valore):
+    ore = int(valore)
+    minuti = int(round((valore - ore) * 60))
+    return f"{ore:02d}:{minuti:02d}"
 
 # Configurazione Streamlit
 st.set_page_config(
@@ -41,25 +47,40 @@ if uploaded_file:
         # Estraggo nome turno + orario dalla prima riga
         turni_info = []
         for col_idx in range(1, len(df.columns)):
-            valore = str(df.iloc[0, col_idx])
-            if pd.notna(valore):
-                try:
-                    # Separiamo nome turno e orari
-                    match = re.search(r"(\d{1,2}[.,-]\d{2})[-](\d{1,2}[.,-]\d{2})", valore)
-                    if match:
-                        ora_inizio_raw = match.group(1).replace(",", ":").replace(".", ":").replace("-", ":")
-                        ora_fine_raw = match.group(2).replace(",", ":").replace(".", ":").replace("-", ":")
+            valore = df.iloc[0, col_idx]
 
-                        ora_inizio = pd.to_datetime(ora_inizio_raw, format="%H:%M").time()
-                        ora_fine = pd.to_datetime(ora_fine_raw, format="%H:%M").time()
+            if pd.isna(valore):
+                continue
 
-                        nome_turno = valore[:match.start()].strip()
+            valore_str = str(valore)
 
-                        turni_info.append((col_idx, nome_turno, ora_inizio, ora_fine))
-                except Exception as e:
-                    st.warning(f"Errore nella lettura della prima riga nella colonna {col_idx + 1}: {e}")
+            try:
+                # Se contiene numeri separati da trattino
+                match = re.search(r"(\d{1,2}[.,-]?\d{0,2})[-](\d{1,2}[.,-]?\d{0,2})", valore_str)
+                if match:
+                    ora_inizio_raw = match.group(1).replace(",", ".").replace("-", ".")
+                    ora_fine_raw = match.group(2).replace(",", ".").replace("-", ".")
 
-        # Scorro i giorni successivi (dalla seconda riga)
+                    try:
+                        # Prova a interpretare come numeri
+                        ora_inizio_num = float(ora_inizio_raw)
+                        ora_fine_num = float(ora_fine_raw)
+
+                        ora_inizio = pd.to_datetime(float_to_time_string(ora_inizio_num), format="%H:%M").time()
+                        ora_fine = pd.to_datetime(float_to_time_string(ora_fine_num), format="%H:%M").time()
+
+                    except:
+                        # Se non sono numeri, tratta come testo orario normale
+                        ora_inizio = pd.to_datetime(ora_inizio_raw.replace(".", ":")).time()
+                        ora_fine = pd.to_datetime(ora_fine_raw.replace(".", ":")).time()
+
+                    nome_turno = valore_str[:match.start()].strip()
+
+                    turni_info.append((col_idx, nome_turno, ora_inizio, ora_fine))
+            except Exception as e:
+                st.warning(f"Errore nella lettura della prima riga nella colonna {col_idx + 1}: {e}")
+
+        # Scorro i giorni successivi
         for i in range(1, len(df)):
             giorno = df.iloc[i, 0]
             if pd.isna(giorno):
@@ -75,7 +96,7 @@ if uploaded_file:
 
                     # Se il turno attraversa la mezzanotte, aggiungo 1 giorno
                     if fine_dt <= inizio_dt:
-                        fine_dt += pd.Timedelta(days=1)
+                        fine_dt += timedelta(days=1)
 
                     # Creo evento
                     evento = Event()
