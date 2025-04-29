@@ -13,8 +13,7 @@ ORARI_PREDEFINITI = {
     "M3": ("08:15", "15:30"),
     "PONTE": ("11:30", "18:30"),
 }
-
-ORARIO_DEFAULT = ("08:00", "14:00")  # per colonne non riconosciute
+ORARIO_DEFAULT = ("08:00", "14:00")
 INDIRIZZO = "PS San Paolo, Via San Vigilio 22 Milano Italia"
 
 def estrai_turni(df, nome):
@@ -24,7 +23,6 @@ def estrai_turni(df, nome):
         for col in df.columns[1:]:
             val = row[col]
             if isinstance(val, str) and nome.upper() in val.strip().upper():
-                # Trova tipo turno in base al nome colonna
                 tipo_turno = next((k for k in ORARI_PREDEFINITI if k in str(col).upper()), None)
                 if tipo_turno:
                     start_str, end_str = ORARI_PREDEFINITI[tipo_turno]
@@ -82,7 +80,7 @@ nome_foglio = st.text_input("Nome del foglio", value="MAGGIO 2025")
 
 if uploaded_file and nome_medico:
     try:
-        df = pd.read_excel(uploaded_file, sheet_name=nome_foglio)
+        df = pd.read_excel(uploaded_file, sheet_name=nome_foglio, header=1)
         prima_colonna = df.columns[0]
         df = df[df[prima_colonna].astype(str).str.contains('2025-05', na=False)]
         df = df.rename(columns={prima_colonna: 'Data'})
