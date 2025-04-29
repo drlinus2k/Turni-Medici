@@ -64,7 +64,7 @@ END:VCALENDAR
         f.write(contenuto)
     return path_completo
 
-# --- Streamlit UI ---
+# --- Interfaccia Streamlit ---
 
 st.title("ICS Extractor – Turni Medici da Excel")
 
@@ -74,11 +74,15 @@ nome_foglio = st.text_input("Nome del foglio", value="MAGGIO 2025")
 
 if uploaded_file and nome_medico:
     try:
+        # Caricamento dati
         df = pd.read_excel(uploaded_file, sheet_name=nome_foglio)
-        df = df[df[df.columns[0]].astype(str).str.contains('2025-05')]
-        df.columns.values[0] = 'Data'
-        df['Data'] = pd.to_datetime(df['Data'])
+        prima_colonna = df.columns[0]
+        df = df[df[prima_colonna].astype(str).str.contains('2025-05', na=False)]
+        df = df.rename(columns={prima_colonna: 'Data'})
+        df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
+        df = df[df['Data'].notna()]
 
+        # Estrazione turni
         turni = estrai_turni(df, nome_medico)
 
         if not turni:
