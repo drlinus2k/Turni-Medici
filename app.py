@@ -4,7 +4,6 @@ import os
 from datetime import datetime, timedelta, timezone
 import zipfile
 
-# Orari predefiniti associati al tipo di turno nel nome colonna
 ORARI_PREDEFINITI = {
     "MATTINO": ("08:00", "14:30"),
     "POMERIGGIO": ("14:30", "21:00"),
@@ -15,34 +14,36 @@ ORARI_PREDEFINITI = {
     "PONTE": ("11:30", "18:30"),
 }
 
+ORARIO_DEFAULT = ("08:00", "14:00")  # per colonne non riconosciute
 INDIRIZZO = "PS San Paolo, Via San Vigilio 22 Milano Italia"
 
-# Estrai turni cercando il nome medico in tutte le colonne (esclusa la prima)
 def estrai_turni(df, nome):
     turni = []
     for _, row in df.iterrows():
         data = row["Data"]
         for col in df.columns[1:]:
-            if isinstance(row[col], str) and nome.upper() in row[col].upper():
-                tipo_turno = None
-                for chiave in ORARI_PREDEFINITI:
-                    if chiave in str(col).upper():
-                        tipo_turno = chiave
-                        break
+            val = row[col]
+            if isinstance(val, str) and nome.upper() in val.strip().upper():
+                # Trova tipo turno in base al nome colonna
+                tipo_turno = next((k for k in ORARI_PREDEFINITI if k in str(col).upper()), None)
                 if tipo_turno:
-                    inizio_str, fine_str = ORARI_PREDEFINITI[tipo_turno]
-                    start_time = datetime.strptime(f"{data.date()} {inizio_str}", "%Y-%m-%d %H:%M")
-                    if "+1" in fine_str:
-                        fine_str = fine_str.replace("+1", "")
-                        end_date = data.date() + timedelta(days=1)
-                    else:
-                        end_date = data.date()
-                    end_time = datetime.strptime(f"{end_date} {fine_str}", "%Y-%m-%d %H:%M")
-                    turni.append({
-                        "Titolo": f"Turno {tipo_turno.title()}",
-                        "Inizio": start_time,
-                        "Fine": end_time
-                    })
+                    start_str, end_str = ORARI_PREDEFINITI[tipo_turno]
+                    titolo = f"Turno {tipo_turno.title()}"
+                else:
+                    start_str, end_str = ORARIO_DEFAULT
+                    titolo = "Turno Generico"
+
+                start_time = datetime.strptime(f"{data.date()} {start_str}", "%Y-%m-%d %H:%M")
+                if "+1" in end_str:
+                    end_time = datetime.strptime(f"{data.date() + timedelta(days=1)} {end_str.replace('+1', '')}", "%Y-%m-%d %H:%M")
+                else:
+                    end_time = datetime.strptime(f"{data.date()} {end_str}", "%Y-%m-%d %H:%M")
+
+                turni.append({
+                    "Titolo": titolo,
+                    "Inizio": start_time,
+                    "Fine": end_time
+                })
     return turni
 
 def crea_file_ics(turno, index, output_dir, nome):
@@ -66,7 +67,6 @@ LOCATION:{INDIRIZZO}
 END:VEVENT
 END:VCALENDAR
 """
-
     path_completo = os.path.join(output_dir, nome_file)
     with open(path_completo, "w") as f:
         f.write(contenuto)
@@ -82,7 +82,6 @@ nome_foglio = st.text_input("Nome del foglio", value="MAGGIO 2025")
 
 if uploaded_file and nome_medico:
     try:
-        # Caricamento dati
         df = pd.read_excel(uploaded_file, sheet_name=nome_foglio)
         prima_colonna = df.columns[0]
         df = df[df[prima_colonna].astype(str).str.contains('2025-05', na=False)]
@@ -90,7 +89,6 @@ if uploaded_file and nome_medico:
         df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
         df = df[df['Data'].notna()]
 
-        # Estrazione turni
         turni = estrai_turni(df, nome_medico)
 
         if not turni:
@@ -98,7 +96,6 @@ if uploaded_file and nome_medico:
         else:
             st.success(f"Trovati {len(turni)} turni per {nome_medico}.")
 
-            # Generazione dei file ICS
             with st.spinner("Generazione dei file ICS..."):
                 output_dir = "ics_files"
                 os.makedirs(output_dir, exist_ok=True)
