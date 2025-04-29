@@ -4,38 +4,45 @@ import os
 from datetime import datetime, timedelta, timezone
 import zipfile
 
-# --- Funzioni di supporto ---
+# Orari predefiniti associati al tipo di turno nel nome colonna
+ORARI_PREDEFINITI = {
+    "MATTINO": ("08:00", "14:30"),
+    "POMERIGGIO": ("14:30", "21:00"),
+    "NOTTE": ("21:00", "08:00+1"),
+    "OBI": ("14:30", "20:00"),
+    "OB": ("08:00", "14:30"),
+    "M3": ("08:15", "15:30"),
+    "PONTE": ("11:30", "18:30"),
+}
 
+INDIRIZZO = "PS San Paolo, Via San Vigilio 22 Milano Italia"
+
+# Estrai turni cercando il nome medico in tutte le colonne (esclusa la prima)
 def estrai_turni(df, nome):
     turni = []
-    orari = {
-        'PS Mattino': ('08:00', '14:30'),
-        'PS Pomeriggio': ('14:30', '21:00'),
-        'PS Notte': ('21:00', '08:00+1'),
-        'OB Mattino': ('08:00', '14:30'),
-        'OBI Pomeriggio': ('14:30', '20:00'),
-        'M3': ('08:15', '15:30'),
-        'PS Ponte': ('11:30', '18:30'),
-    }
-
-    colonne = {
-        'PS Mattino 1', 'PS Mattino 2', 'PS Pomeriggio 1', 'PS Pomeriggio 2',
-        'PS Notte 1', 'PS Notte 2', 'OB Mattino', 'OBI Pomeriggio', 'M3', 'PS Ponte'
-    }
-
-    df = df[[col for col in df.columns if col == 'Data' or col in colonne]]
-
     for _, row in df.iterrows():
-        for col in colonne:
-            if col in row and isinstance(row[col], str) and nome.upper() in row[col].upper():
-                turno = col.replace(' 1', '').replace(' 2', '')
-                start, end = orari[turno]
-                dt_start = datetime.strptime(f"{row['Data'].date()} {start}", "%Y-%m-%d %H:%M")
-                if '+1' in end:
-                    dt_end = datetime.strptime(f"{row['Data'].date() + timedelta(days=1)} {end.replace('+1', '')}", "%Y-%m-%d %H:%M")
-                else:
-                    dt_end = datetime.strptime(f"{row['Data'].date()} {end}", "%Y-%m-%d %H:%M")
-                turni.append({'Titolo': turno, 'Inizio': dt_start, 'Fine': dt_end})
+        data = row["Data"]
+        for col in df.columns[1:]:
+            if isinstance(row[col], str) and nome.upper() in row[col].upper():
+                tipo_turno = None
+                for chiave in ORARI_PREDEFINITI:
+                    if chiave in str(col).upper():
+                        tipo_turno = chiave
+                        break
+                if tipo_turno:
+                    inizio_str, fine_str = ORARI_PREDEFINITI[tipo_turno]
+                    start_time = datetime.strptime(f"{data.date()} {inizio_str}", "%Y-%m-%d %H:%M")
+                    if "+1" in fine_str:
+                        fine_str = fine_str.replace("+1", "")
+                        end_date = data.date() + timedelta(days=1)
+                    else:
+                        end_date = data.date()
+                    end_time = datetime.strptime(f"{end_date} {fine_str}", "%Y-%m-%d %H:%M")
+                    turni.append({
+                        "Titolo": f"Turno {tipo_turno.title()}",
+                        "Inizio": start_time,
+                        "Fine": end_time
+                    })
     return turni
 
 def crea_file_ics(turno, index, output_dir, nome):
@@ -53,8 +60,9 @@ UID:{uid}
 DTSTAMP:{datetime.now(timezone.utc).strftime(dt_fmt)}Z
 DTSTART;TZID=Europe/Rome:{start}
 DTEND;TZID=Europe/Rome:{end}
-SUMMARY:Turno {turno['Titolo']}
+SUMMARY:{turno['Titolo']}
 DESCRIPTION:Turno lavorativo assegnato a {nome}
+LOCATION:{INDIRIZZO}
 END:VEVENT
 END:VCALENDAR
 """
