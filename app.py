@@ -1,15 +1,10 @@
-import os
+import streamlit as st
 import pandas as pd
+import os
 from datetime import datetime, timedelta, timezone
 import zipfile
-import argparse
 
-def carica_file_excel(percorso_file, foglio):
-    df = pd.read_excel(percorso_file, sheet_name=foglio)
-    df = df[df[df.columns[0]].astype(str).str.contains('2025-05')]
-    df.columns.values[0] = 'Data'
-    df['Data'] = pd.to_datetime(df['Data'])
-    return df
+# --- Funzioni di supporto ---
 
 def estrai_turni(df, nome):
     turni = []
@@ -69,33 +64,46 @@ END:VCALENDAR
         f.write(contenuto)
     return path_completo
 
-def esporta_turni(percorso_excel, nome_medico, foglio='MAGGIO 2025', crea_zip=True):
-    df = carica_file_excel(percorso_excel, foglio)
-    turni = estrai_turni(df, nome_medico)
+# --- Streamlit UI ---
 
-    output_dir = os.path.join(os.path.dirname(percorso_excel), f"Turni_{nome_medico}_ICS")
-    os.makedirs(output_dir, exist_ok=True)
+st.title("ICS Extractor – Turni Medici da Excel")
 
-    files = [crea_file_ics(t, i+1, output_dir, nome_medico) for i, t in enumerate(turni)]
+uploaded_file = st.file_uploader("Carica il file Excel dei turni", type=["xlsx"])
+nome_medico = st.text_input("Nome del medico (es. VITUCCI)")
+nome_foglio = st.text_input("Nome del foglio", value="MAGGIO 2025")
 
-    if crea_zip:
-        zip_path = output_dir + ".zip"
-        with zipfile.ZipFile(zip_path, 'w') as z:
-            for file in files:
-                z.write(file, os.path.basename(file))
-        print(f"[✓] Archivio ZIP creato: {zip_path}")
-    else:
-        print(f"[✓] File ICS salvati in: {output_dir}")
+if uploaded_file and nome_medico:
+    try:
+        df = pd.read_excel(uploaded_file, sheet_name=nome_foglio)
+        df = df[df[df.columns[0]].astype(str).str.contains('2025-05')]
+        df.columns.values[0] = 'Data'
+        df['Data'] = pd.to_datetime(df['Data'])
 
-def main():
-    parser = argparse.ArgumentParser(description="Estrai i turni da un file Excel e genera file ICS.")
-    parser.add_argument("file", help="Percorso del file Excel dei turni")
-    parser.add_argument("medico", help="Nome del medico da cercare (es. VITUCCI)")
-    parser.add_argument("--foglio", default="MAGGIO 2025", help="Nome del foglio Excel (default: 'MAGGIO 2025')")
-    parser.add_argument("--nozip", action="store_true", help="Non creare archivio ZIP")
+        turni = estrai_turni(df, nome_medico)
 
-    args = parser.parse_args()
-    esporta_turni(args.file, args.medico, foglio=args.foglio, crea_zip=not args.nozip)
+        if not turni:
+            st.warning("Nessun turno trovato per il medico indicato.")
+        else:
+            st.success(f"Trovati {len(turni)} turni per {nome_medico}.")
 
-if __name__ == "__main__":
-    main()
+            # Generazione dei file ICS
+            with st.spinner("Generazione dei file ICS..."):
+                output_dir = "ics_files"
+                os.makedirs(output_dir, exist_ok=True)
+
+                ics_paths = [crea_file_ics(t, i+1, output_dir, nome_medico) for i, t in enumerate(turni)]
+                zip_path = f"{output_dir}_{nome_medico}.zip"
+                with zipfile.ZipFile(zip_path, 'w') as z:
+                    for file in ics_paths:
+                        z.write(file, os.path.basename(file))
+
+                with open(zip_path, "rb") as f:
+                    st.download_button(
+                        label="Scarica tutti i turni in formato ZIP",
+                        data=f,
+                        file_name=f"turni_{nome_medico}.zip",
+                        mime="application/zip"
+                    )
+
+    except Exception as e:
+        st.error(f"Errore durante l'elaborazione: {e}")
