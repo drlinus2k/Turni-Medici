@@ -1,136 +1,101 @@
-import streamlit as st
+import os
 import pandas as pd
-from datetime import datetime, timedelta, time
-from ics import Calendar, Event
-import re
+from datetime import datetime, timedelta, timezone
+import zipfile
+import argparse
 
-# Funzione per convertire valore Excel (frazione giorno) in orario
-def excel_time_to_time(value):
-    if isinstance(value, (int, float)):
-        ore_float = value * 24
-        ore = int(ore_float)
-        minuti = int(round((ore_float - ore) * 60))
-        return f"{ore:02d}:{minuti:02d}"
+def carica_file_excel(percorso_file, foglio):
+    df = pd.read_excel(percorso_file, sheet_name=foglio)
+    df = df[df[df.columns[0]].astype(str).str.contains('2025-05')]
+    df.columns.values[0] = 'Data'
+    df['Data'] = pd.to_datetime(df['Data'])
+    return df
+
+def estrai_turni(df, nome):
+    turni = []
+    orari = {
+        'PS Mattino': ('08:00', '14:30'),
+        'PS Pomeriggio': ('14:30', '21:00'),
+        'PS Notte': ('21:00', '08:00+1'),
+        'OB Mattino': ('08:00', '14:30'),
+        'OBI Pomeriggio': ('14:30', '20:00'),
+        'M3': ('08:15', '15:30'),
+        'PS Ponte': ('11:30', '18:30'),
+    }
+
+    colonne = {
+        'PS Mattino 1', 'PS Mattino 2', 'PS Pomeriggio 1', 'PS Pomeriggio 2',
+        'PS Notte 1', 'PS Notte 2', 'OB Mattino', 'OBI Pomeriggio', 'M3', 'PS Ponte'
+    }
+
+    df = df[[col for col in df.columns if col == 'Data' or col in colonne]]
+
+    for _, row in df.iterrows():
+        for col in colonne:
+            if col in row and isinstance(row[col], str) and nome.upper() in row[col].upper():
+                turno = col.replace(' 1', '').replace(' 2', '')
+                start, end = orari[turno]
+                dt_start = datetime.strptime(f"{row['Data'].date()} {start}", "%Y-%m-%d %H:%M")
+                if '+1' in end:
+                    dt_end = datetime.strptime(f"{row['Data'].date() + timedelta(days=1)} {end.replace('+1', '')}", "%Y-%m-%d %H:%M")
+                else:
+                    dt_end = datetime.strptime(f"{row['Data'].date()} {end}", "%Y-%m-%d %H:%M")
+                turni.append({'Titolo': turno, 'Inizio': dt_start, 'Fine': dt_end})
+    return turni
+
+def crea_file_ics(turno, index, output_dir, nome):
+    dt_fmt = "%Y%m%dT%H%M%S"
+    start = turno['Inizio'].strftime(dt_fmt)
+    end = turno['Fine'].strftime(dt_fmt)
+    uid = f"turno{index}@{nome.lower()}"
+    nome_file = f"turno_{index:02d}_{turno['Titolo'].replace(' ', '_')}.ics"
+
+    contenuto = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//TurniMedico//EN
+BEGIN:VEVENT
+UID:{uid}
+DTSTAMP:{datetime.now(timezone.utc).strftime(dt_fmt)}Z
+DTSTART;TZID=Europe/Rome:{start}
+DTEND;TZID=Europe/Rome:{end}
+SUMMARY:Turno {turno['Titolo']}
+DESCRIPTION:Turno lavorativo assegnato a {nome}
+END:VEVENT
+END:VCALENDAR
+"""
+
+    path_completo = os.path.join(output_dir, nome_file)
+    with open(path_completo, "w") as f:
+        f.write(contenuto)
+    return path_completo
+
+def esporta_turni(percorso_excel, nome_medico, foglio='MAGGIO 2025', crea_zip=True):
+    df = carica_file_excel(percorso_excel, foglio)
+    turni = estrai_turni(df, nome_medico)
+
+    output_dir = os.path.join(os.path.dirname(percorso_excel), f"Turni_{nome_medico}_ICS")
+    os.makedirs(output_dir, exist_ok=True)
+
+    files = [crea_file_ics(t, i+1, output_dir, nome_medico) for i, t in enumerate(turni)]
+
+    if crea_zip:
+        zip_path = output_dir + ".zip"
+        with zipfile.ZipFile(zip_path, 'w') as z:
+            for file in files:
+                z.write(file, os.path.basename(file))
+        print(f"[✓] Archivio ZIP creato: {zip_path}")
     else:
-        return str(value).replace(",", ":").replace(".", ":").replace("-", ":")
+        print(f"[✓] File ICS salvati in: {output_dir}")
 
-# Configurazione Streamlit
-st.set_page_config(
-    page_title="Gestione Turni Medici",
-    page_icon="favicon.ico",
-    layout="wide"
-)
+def main():
+    parser = argparse.ArgumentParser(description="Estrai i turni da un file Excel e genera file ICS.")
+    parser.add_argument("file", help="Percorso del file Excel dei turni")
+    parser.add_argument("medico", help="Nome del medico da cercare (es. VITUCCI)")
+    parser.add_argument("--foglio", default="MAGGIO 2025", help="Nome del foglio Excel (default: 'MAGGIO 2025')")
+    parser.add_argument("--nozip", action="store_true", help="Non creare archivio ZIP")
 
-st.title("Gestione Turni Medici")
+    args = parser.parse_args()
+    esporta_turni(args.file, args.medico, foglio=args.foglio, crea_zip=not args.nozip)
 
-# Caricamento file turni
-uploaded_file = st.file_uploader("Carica il file dei turni (.xlsx)", type=["xlsx"])
-
-if uploaded_file:
-    df = pd.read_excel(uploaded_file)
-
-    st.success("File caricato correttamente!")
-
-    # Selezione del cognome
-    cognome_cercato = st.text_input("Inserisci il tuo cognome esattamente come nel file").strip()
-
-    # Selezione contratto
-    contratto = st.radio(
-        "Seleziona il tipo di contratto:",
-        ("Standard Ospedaliero (38h/settimana)", "Calabria Specializzandi (32h/settimana)")
-    )
-    ore_settimanali = 38 if contratto.startswith("Standard") else 32
-    ore_mensili_contratto = ore_settimanali * 4  # Approssimazione 4 settimane
-
-    indirizzo_lavoro = st.text_input("Inserisci l'indirizzo del luogo di lavoro").strip()
-
-    if cognome_cercato and indirizzo_lavoro:
-        calendario = Calendar()
-        ore_totali = 0
-
-        # Estraggo nome turno + orario dalla prima riga
-        turni_info = []
-        for col_idx in range(1, len(df.columns)):
-            valore = df.iloc[0, col_idx]
-
-            if pd.isna(valore):
-                continue
-
-            valore_str = str(valore)
-
-            try:
-                # Cerco coppia orari separati da trattino
-                match = re.search(r"(\d{1,2}[.,-]?\d{0,2})[-](\d{1,2}[.,-]?\d{0,2})", valore_str)
-                if match:
-                    ora_inizio_raw = match.group(1)
-                    ora_fine_raw = match.group(2)
-
-                    # Se è un float, converti come frazione giorno Excel
-                    try:
-                        ora_inizio_excel = float(ora_inizio_raw.replace(",", ".").replace("-", "."))
-                        ora_fine_excel = float(ora_fine_raw.replace(",", ".").replace("-", "."))
-                        ora_inizio_str = excel_time_to_time(ora_inizio_excel)
-                        ora_fine_str = excel_time_to_time(ora_fine_excel)
-                    except:
-                        ora_inizio_str = excel_time_to_time(ora_inizio_raw)
-                        ora_fine_str = excel_time_to_time(ora_fine_raw)
-
-                    ora_inizio = pd.to_datetime(ora_inizio_str, format="%H:%M").time()
-                    ora_fine = pd.to_datetime(ora_fine_str, format="%H:%M").time()
-
-                    nome_turno = valore_str[:match.start()].strip()
-
-                    turni_info.append((col_idx, nome_turno, ora_inizio, ora_fine))
-            except Exception as e:
-                st.warning(f"Errore nella lettura della prima riga nella colonna {col_idx + 1}: {e}")
-
-        # Scorro i giorni successivi
-        for i in range(1, len(df)):
-            giorno = df.iloc[i, 0]
-            if pd.isna(giorno):
-                continue
-            giorno_data = pd.to_datetime(giorno).date()
-
-            for col_idx, nome_turno, ora_inizio, ora_fine in turni_info:
-                valore_cella = df.iloc[i, col_idx]
-                if str(valore_cella).strip().upper() == cognome_cercato.upper():
-                    # Costruisco inizio e fine turno
-                    inizio_dt = datetime.combine(giorno_data, ora_inizio)
-                    fine_dt = datetime.combine(giorno_data, ora_fine)
-
-                    # Se il turno attraversa la mezzanotte, aggiungo 1 giorno
-                    if fine_dt <= inizio_dt:
-                        fine_dt += timedelta(days=1)
-
-                    # Creo evento
-                    evento = Event()
-                    evento.name = nome_turno
-                    evento.begin = inizio_dt
-                    evento.end = fine_dt
-                    evento.location = indirizzo_lavoro
-                    evento.description = "Turno registrato automaticamente."
-
-                    calendario.events.add(evento)
-
-                    # Calcolo ore
-                    durata_ore = (fine_dt - inizio_dt).total_seconds() / 3600
-                    ore_totali += durata_ore
-
-        # Visualizzazione risultati
-        st.subheader("Risultati Turni")
-
-        st.markdown(f"**Ore totali lavorate:** {round(ore_totali, 2)} ore")
-        st.markdown(f"**Ore previste da contratto selezionato:** {ore_mensili_contratto} ore")
-
-        scostamento = round(ore_totali - ore_mensili_contratto, 2)
-        colore = "green" if scostamento >= 0 else "red"
-
-        st.markdown(f"<span style='color:{colore};'><b>Scostamento: {scostamento} ore</b></span>", unsafe_allow_html=True)
-
-        # Download file calendario
-        st.download_button(
-            label="📅 Scarica il tuo calendario (.ics)",
-            data=str(calendario),
-            file_name=f"turni_{cognome_cercato.lower()}.ics",
-            mime="text/calendar"
-        )
+if __name__ == "__main__":
+    main()
